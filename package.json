@@ -1,7 +1,7 @@
 {
   "name": "viewstats",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "ViewStats YouTube Desktop Browser",
   "author": "Solan",
   "type": "module",
@@ -93,7 +93,7 @@
           "arch": ["x64"]
         }
       ],
-      "icon": "build/icon.ico"
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": true,
