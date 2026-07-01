@@ -14,8 +14,8 @@ if (!isDev) {
     const { autoUpdater: updater, NsisUpdater } = require('electron-updater');
     autoUpdater = updater;
 
-    // Set up logging for debugging update issues
-    autoUpdater.logger = require('electron').app; // simple fallback
+    // Disable logger (avoids "this._logger.info is not a function" error)
+    autoUpdater.logger = null;
     autoUpdater.autoDownload = false; // We'll ask user first
     autoUpdater.autoInstallOnAppQuit = true;
 
