@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Electron Build outputs - TOO LARGE for GitHub, upload to Releases manually
+dist/
+dist_electron/
+release/
+out/
+
+# Binary files - never commit these
+*.exe
+*.msi
+*.zip
+*.7z
+*.dmg
+*.AppImage
+*.asar
+*.blockmap
+
+# Environment variables - sensitive API keys
+.env
+.env.local
+.env.production
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Cache
+.vite/
+*.cache
+avatar-cache.json
