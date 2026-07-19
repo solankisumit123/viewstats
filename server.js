@@ -245,8 +245,9 @@ async function resolveChannelAvatar(channelId, channelTitle) {
 }
 
 // 24-hour cache manager with filesystem persistence
+const electronDataDir = process.env.ELECTRON_USER_DATA || path.join(os.homedir(), '.viewstats');
 const CACHE_FILE = process.env.ELECTRON === 'true'
-  ? path.join(os.homedir(), '.viewstats', 'avatar-cache.json')
+  ? path.join(electronDataDir, 'avatar-cache.json')
   : './avatar-cache.json';
 
 try {

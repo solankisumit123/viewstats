@@ -2,8 +2,10 @@ const { app, BrowserWindow, dialog, shell, ipcMain } = require('electron');
 const path = require('path');
 const { fork } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 
 const isDev = !app.isPackaged;
+console.log(`[main] PID=${process.pid} isDev=${isDev} app.isPackaged=${app.isPackaged}`);
 
 let serverProcess = null;
 let mainWindow = null;
@@ -97,16 +99,38 @@ ipcMain.handle('quit-and-install', () => {
 // Start the Express backend server
 function startServer() {
   const serverPath = path.join(__dirname, 'server.js');
-  const logPath = path.join(__dirname, 'server-error.log');
-  const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+  const logDir = app.getPath('userData');
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+  const logPath = path.join(logDir, 'server-error.log');
+  let logStream;
+  try {
+    // Attempt to create a write stream in the Electron userData directory.
+    // In some packaged setups the resolved path may be inside the asar
+    // and therefore read-only — fall back to the OS temp dir if so.
+    logStream = fs.createWriteStream(logPath, { flags: 'a' });
+  } catch (err) {
+    console.error('Failed to open userData log file, falling back to temp dir:', err?.message || err);
+    try {
+      const fallbackPath = path.join(os.tmpdir(), 'viewstats-server-error.log');
+      logStream = fs.createWriteStream(fallbackPath, { flags: 'a' });
+      console.log('Logging to fallback path:', fallbackPath);
+    } catch (err2) {
+      // If we still can't create a log stream, fall back to console only.
+      console.error('Failed to open fallback log file:', err2?.message || err2);
+      logStream = { write: (s) => { console.log('[LogFallback]', s); } };
+    }
+  }
 
-  // Pass ELECTRON=true to force server.js to use AppData write permissions
+  // Pass Electron user data path so server.js can write cache files safely
   serverProcess = fork(serverPath, [], {
     silent: true,
     env: {
       ...process.env,
       PORT: '3001',
       ELECTRON: 'true',
+      ELECTRON_USER_DATA: app.getPath('userData'),
       NODE_ENV: isDev ? 'development' : 'production'
     }
   });
@@ -197,10 +221,14 @@ function createWindow() {
 }
 
 // Enforce Single Instance Lock for proper desktop app behavior
+console.log('[main] requesting single instance lock...');
 const gotTheLock = app.requestSingleInstanceLock();
+console.log('[main] requestSingleInstanceLock ->', gotTheLock);
 if (!gotTheLock) {
+  console.log('[main] another instance detected, quitting');
   app.quit();
 } else {
+  console.log('[main] got single instance lock, continuing');
   app.on('second-instance', () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();

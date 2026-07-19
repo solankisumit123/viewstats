@@ -46,6 +46,7 @@
     "concurrently": "^10.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "electron-updater": "^6.3.9",
     "express": "^4.22.2",
     "framer-motion": "^12.42.1",
     "googleapis": "^173.0.0",
@@ -58,7 +59,6 @@
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.1",
     "tailwindcss-animate": "^1.0.7",
-    "electron-updater": "^6.3.9",
     "yt-search": "^2.13.1"
   },
   "devDependencies": {
