@@ -5,19 +5,27 @@ import { Play, RefreshCw, Star, Search, X, ChevronDown, Loader2 } from 'lucide-r
 import { CategoryBar, CATEGORIES } from '../components/youtube/CategoryBar'
 import { VideoCard, type VideoData } from '../components/youtube/VideoCard'
 import { VideoPlayer } from '../components/youtube/VideoPlayer'
+import { ShortsPlayer } from '../components/youtube/ShortsPlayer'
 import { SkeletonCard } from '../components/youtube/SkeletonCard'
-
 import { ChannelAvatar } from '../components/ChannelAvatar'
 
-/* ─── fetch one page of videos and channels from the backend ─── */
-async function fetchPage(query: string, page: number): Promise<{ videos: VideoData[], channels: any[] }> {
-  const url = `/api/search?q=${encodeURIComponent(query)}&type=all&page=${page}`
-  const res = await fetch(url)
+/* ─── fetch one page of category-scoped videos from the backend ─── */
+async function fetchCategoryPage(
+  categoryId: string,
+  page: number,
+  searchQuery = ''
+): Promise<{ videos: VideoData[]; channels: any[] }> {
+  const params = new URLSearchParams({
+    id: categoryId,
+    page: String(page),
+    ...(searchQuery ? { q: searchQuery } : {}),
+  })
+  const res = await fetch(`/api/category?${params}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const data = await res.json()
   return {
     videos: (data.videos || []) as VideoData[],
-    channels: (data.channels || []) as any[]
+    channels: (data.channels || []) as any[],
   }
 }
 
@@ -35,38 +43,41 @@ export function YouTubeBrowser() {
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedCategory = searchParams.get('category') || 'trending'
   const [searchInput, setSearchInput] = useState('')
-  const [activeSearch, setActiveSearch]   = useState('')   // committed search
+  const [activeSearch, setActiveSearch] = useState('')   // committed search
 
   /* video feed state */
-  const [videos, setVideos]       = useState<VideoData[]>([])
-  const [channels, setChannels]   = useState<any[]>([])
-  const [page, setPage]           = useState(1)
-  const [hasMore, setHasMore]     = useState(true)
-  const [loading, setLoading]     = useState(true)        // first page loading
-  const [loadingMore, setLoadingMore] = useState(false)   // subsequent pages
-  const [error, setError]         = useState<string | null>(null)
+  const [videos, setVideos]           = useState<VideoData[]>([])
+  const [channels, setChannels]       = useState<any[]>([])
+  const [page, setPage]               = useState(1)
+  const [hasMore, setHasMore]         = useState(true)
+  const [loading, setLoading]         = useState(true)        // first page loading
+  const [loadingMore, setLoadingMore] = useState(false)       // subsequent pages
+  const [error, setError]             = useState<string | null>(null)
   const [loadMoreError, setLoadMoreError] = useState(false)
 
   /* player */
   const [selectedVideo, setSelectedVideo] = useState<VideoData | null>(null)
 
   /* refs */
-  const sentinelRef   = useRef<HTMLDivElement>(null)
-  const activeQueryRef = useRef('')                        // tracks current live query
-  const isFetchingRef = useRef(false)
+  const sentinelRef    = useRef<HTMLDivElement>(null)
+  /* Track the currently active [categoryId + search] pair to reject stale fetches */
+  const activeFetchKey = useRef('')
+  const isFetchingRef  = useRef(false)
 
-  /* ── compute current search query ── */
-  const currentQuery = useCallback(() => {
-    if (activeSearch.trim()) return activeSearch.trim()
-    return CATEGORIES.find(c => c.id === selectedCategory)?.query || 'trending'
-  }, [activeSearch, selectedCategory])
+  /* ── derived ── */
+  const isShortsMode = searchParams.get('type') === 'shorts'
+  const currentCat   = CATEGORIES.find(c => c.id === selectedCategory)
+  const CatIcon      = currentCat?.icon || Play
+  const displayTitle = activeSearch
+    ? `Results: "${activeSearch}"`
+    : (currentCat?.name || 'Trending')
 
   /* ══════════════════════════════════════════════════
-     LOAD FIRST PAGE whenever category or search changes
+     LOAD FIRST PAGE whenever category or active search changes
   ══════════════════════════════════════════════════ */
   useEffect(() => {
-    const q = currentQuery()
-    activeQueryRef.current = q
+    const fetchKey = `${selectedCategory}::${activeSearch}`
+    activeFetchKey.current = fetchKey
 
     setVideos([])
     setChannels([])
@@ -74,24 +85,24 @@ export function YouTubeBrowser() {
     setHasMore(true)
     setError(null)
     setLoading(true)
+    isFetchingRef.current = false
 
-    fetchPage(q, 1)
+    fetchCategoryPage(selectedCategory, 1, activeSearch)
       .then(res => {
-        if (activeQueryRef.current !== q) return   // stale, ignore
+        if (activeFetchKey.current !== fetchKey) return   // stale, ignore
         setVideos(res.videos)
         setChannels(res.channels)
-        // Keep hasMore=true as long as we got at least 1 video
         setHasMore(res.videos.length > 0)
       })
       .catch(() => {
-        if (activeQueryRef.current !== q) return
+        if (activeFetchKey.current !== fetchKey) return
         setError('Failed to load videos. Please try again.')
       })
       .finally(() => {
-        if (activeQueryRef.current !== q) return
+        if (activeFetchKey.current !== fetchKey) return
         setLoading(false)
       })
-  }, [selectedCategory, activeSearch, currentQuery])
+  }, [selectedCategory, activeSearch])
 
   // Sync URL search parameter to local state
   useEffect(() => {
@@ -100,26 +111,24 @@ export function YouTubeBrowser() {
     setSearchInput(q)
   }, [searchParams])
 
-
   /* ══════════════════════════════════════════════════
      LOAD NEXT PAGE  (called by scroll sentinel OR button)
   ══════════════════════════════════════════════════ */
   const loadMore = useCallback(() => {
     if (loadingMore || loading || !hasMore || loadMoreError || isFetchingRef.current) return
 
-    const q = activeQueryRef.current
+    const fetchKey = `${selectedCategory}::${activeSearch}`
     const nextPage = page + 1
 
     setLoadingMore(true)
     setLoadMoreError(false)
     isFetchingRef.current = true
 
-    fetchPage(q, nextPage)
+    fetchCategoryPage(selectedCategory, nextPage, activeSearch)
       .then(res => {
-        if (activeQueryRef.current !== q) return   // stale
+        if (activeFetchKey.current !== fetchKey) return   // stale
 
         if (res.videos.length === 0) {
-          // Nothing came back — disable infinite scroll but show button to retry
           setHasMore(false)
         } else {
           // Deduplicate by youtube_id
@@ -129,7 +138,7 @@ export function YouTubeBrowser() {
             return [...prev, ...fresh]
           })
           setPage(nextPage)
-          setHasMore(true)            // always assume more until we get 0
+          setHasMore(true)
         }
       })
       .catch(err => {
@@ -137,10 +146,11 @@ export function YouTubeBrowser() {
         setLoadMoreError(true)
       })
       .finally(() => {
+        if (activeFetchKey.current !== fetchKey) return
         setLoadingMore(false)
         isFetchingRef.current = false
       })
-  }, [loadingMore, loading, hasMore, page, loadMoreError])
+  }, [loadingMore, loading, hasMore, page, loadMoreError, selectedCategory, activeSearch])
 
   /* ══════════════════════════════════════════════════
      INTERSECTION OBSERVER — triggers loadMore when
@@ -169,13 +179,6 @@ export function YouTubeBrowser() {
     return () => window.removeEventListener('yt-play', handler)
   }, [])
 
-  /* ── derived ── */
-  const currentCat = CATEGORIES.find(c => c.id === selectedCategory)
-  const CatIcon = currentCat?.icon || Play
-  const displayTitle = activeSearch
-    ? `Results: "${activeSearch}"`
-    : (currentCat?.name || 'Trending')
-
   /* handlers */
   const handleCategoryClick = (id: string) => {
     setSearchParams({ category: id })
@@ -185,6 +188,7 @@ export function YouTubeBrowser() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
+    // Search stays scoped to the current category — no category param change
     setActiveSearch(searchInput.trim())
   }
 
@@ -200,9 +204,10 @@ export function YouTubeBrowser() {
     setChannels([])
     setPage(1)
     setHasMore(true)
-    const q = activeQueryRef.current
-    fetchPage(q, 1)
+    const fetchKey = activeFetchKey.current
+    fetchCategoryPage(selectedCategory, 1, activeSearch)
       .then(res => {
+        if (activeFetchKey.current !== fetchKey) return
         setVideos(res.videos)
         setChannels(res.channels)
         setHasMore(res.videos.length > 0)
@@ -214,6 +219,16 @@ export function YouTubeBrowser() {
   /* ══════════════════════════════════════════════════
      RENDER
   ══════════════════════════════════════════════════ */
+  if (isShortsMode && videos.length > 0) {
+    const shortsOnlyVideos = videos.filter(v => (!v.duration || v.duration <= 180))
+    return (
+      <ShortsPlayer
+        videos={shortsOnlyVideos.length > 0 ? shortsOnlyVideos : videos}
+        onClose={() => setSearchParams({ category: selectedCategory })}
+      />
+    )
+  }
+
   return (
     <div className="space-y-5 pb-16">
 
@@ -227,20 +242,20 @@ export function YouTubeBrowser() {
             <h1 className="text-2xl font-bold tracking-tight">YouTube Browser</h1>
             <p className="text-sm text-muted-foreground">
               {loading
-                ? 'Loading videos…'
+                ? `Loading ${currentCat?.name || 'Trending'} videos…`
                 : `${videos.length}${hasMore ? '+' : ''} videos · ${displayTitle}`}
             </p>
           </div>
         </div>
 
-        {/* Search */}
+        {/* Search — scoped to current category */}
         <form onSubmit={handleSearch} className="relative w-full sm:w-96 flex gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
-              placeholder="Search any topic…"
+              placeholder={`Search in ${currentCat?.name || 'Trending'}…`}
               className="w-full pl-9 pr-9 py-2.5 rounded-xl bg-card border border-input
                          focus:outline-none focus:ring-2 focus:ring-youtube/40 text-sm transition-all"
             />
@@ -262,14 +277,10 @@ export function YouTubeBrowser() {
       {/* ── Category Bar ── */}
       <CategoryBar selected={selectedCategory} onSelect={handleCategoryClick} />
 
-
-
-
-
       {/* ── Active search badge ── */}
       {activeSearch && (
         <div className="flex items-center gap-2 text-sm flex-wrap">
-          <span className="text-muted-foreground">Showing:</span>
+          <span className="text-muted-foreground">Searching in <strong>{currentCat?.name}</strong>:</span>
           <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-youtube/10 text-youtube text-xs font-semibold">
             {activeSearch}
             <button onClick={clearSearch}><X className="w-3 h-3" /></button>
@@ -317,7 +328,6 @@ export function YouTubeBrowser() {
           </div>
         </div>
       )}
-
 
       {/* ── Section header ── */}
       <div className="flex items-center justify-between">
@@ -367,8 +377,8 @@ export function YouTubeBrowser() {
         /* Empty state */
         <div className="flex flex-col items-center justify-center py-24 gap-3 text-muted-foreground">
           <Star className="w-12 h-12 opacity-20" />
-          <p className="text-sm font-medium">No videos found</p>
-          <p className="text-xs opacity-60">Try a different category or search term</p>
+          <p className="text-sm font-medium">No {currentCat?.name} videos found</p>
+          <p className="text-xs opacity-60">Try refreshing or switching to another category</p>
         </div>
       ) : (
         <>
@@ -377,7 +387,18 @@ export function YouTubeBrowser() {
               <VideoCard
                 key={`${v.youtube_id}-${i}`}
                 video={v}
-                onClick={setSelectedVideo}
+                onClick={(selected) => {
+                  if (
+                    selected.is_short ||
+                    (selected.duration && selected.duration <= 180) ||
+                    selected.title.toLowerCase().includes('#shorts')
+                  ) {
+                    setSearchParams({ type: 'shorts', category: selectedCategory })
+                    setSelectedVideo(null)
+                  } else {
+                    setSelectedVideo(selected)
+                  }
+                }}
                 index={i % 16}          /* cap delay so late cards don't lag */
               />
             ))}
@@ -400,7 +421,7 @@ export function YouTubeBrowser() {
             {loadingMore && (
               <div className="flex items-center gap-2 text-muted-foreground text-sm py-2">
                 <Loader2 className="w-5 h-5 animate-spin text-youtube" />
-                Loading more {activeSearch || currentCat?.name} videos…
+                Loading more {currentCat?.name} videos…
               </div>
             )}
 
@@ -424,14 +445,14 @@ export function YouTubeBrowser() {
                              hover:border-youtube transition-all duration-200 shadow-sm hover:shadow-md"
                 >
                   <ChevronDown className="w-4 h-4" />
-                  Load More Videos
+                  Load More {currentCat?.name} Videos
                 </button>
               )
             )}
 
             {!hasMore && videos.length > 0 && (
               <p className="text-xs text-muted-foreground py-2">
-                All available videos loaded · Switch category to discover more
+                All available {currentCat?.name} videos loaded · Switch category to discover more
               </p>
             )}
           </div>
@@ -444,6 +465,7 @@ export function YouTubeBrowser() {
           <VideoPlayer
             key={selectedVideo.youtube_id}
             video={selectedVideo}
+            category={selectedCategory}
             onClose={() => setSelectedVideo(null)}
           />
         )}

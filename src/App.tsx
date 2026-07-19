@@ -4,6 +4,7 @@ import { Layout } from './components/Layout'
 import { HomePage } from './pages/HomePage'
 import { YouTubeBrowser } from './pages/YouTubeBrowser'
 import { useEffect } from 'react'
+import { UpdateModal } from './components/UpdateModal'
 import { supabase } from './lib/supabase'
 import { getChannelDetails } from './lib/youtube-api'
 
@@ -44,16 +45,16 @@ function App() {
                         comment_count: v.comment_count,
                         duration: v.duration,
                         is_short: false
-                      }, { onConflict: 'youtube_id' })
+                      }, { onConflict: 'youtube_id' }).catch(() => {})
                     }
                   }
                 }
               })
-              .catch(err => console.error('Sync error for', ch.title, err))
+              .catch(() => {})
           }
         }
-      } catch (err) {
-        console.error('Error syncing channels:', err)
+      } catch {
+        // Ignore background sync errors
       }
     }
     
@@ -69,8 +70,7 @@ function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/youtube-browser" element={<YouTubeBrowser />} />
           </Routes>
-
-
+          <UpdateModal />
         </Layout>
       </BrowserRouter>
     </ThemeProvider>

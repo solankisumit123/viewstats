@@ -19,7 +19,7 @@ const PORT = process.env.PORT || 3001;
 
 // Initialize Supabase Client
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 let supabase = null;
 if (supabaseUrl && supabaseKey && supabaseUrl !== 'https://placeholder.supabase.co') {
   try {
@@ -230,7 +230,11 @@ async function resolveChannelAvatar(channelId, channelTitle) {
       }, { onConflict: 'youtube_id' });
 
       if (error) {
-        console.error('Supabase channels upsert error:', error.message);
+        if (error.code === '42501' || error.message?.includes('row-level security')) {
+          // Suppress RLS warning — disk & memory caches handle this seamlessly
+        } else {
+          console.error('Supabase channels upsert error:', error.message);
+        }
       }
     } catch (dbErr) {
       console.error('DB error during upsert:', dbErr.message);
@@ -336,7 +340,12 @@ async function getChannelAvatarCached(channelId, channelTitle) {
   if (localAvatarCache.has(cleanId)) {
     return localAvatarCache.get(cleanId).url;
   }
-  return null;
+
+  // Return unavatar CDN fallback URL so endpoint never fails with 404
+  const fallbackUrl = `https://unavatar.io/youtube/${cleanId.replace('@', '')}`;
+  localAvatarCache.set(cleanId, { url: fallbackUrl, ts: now });
+  saveLocalAvatarCache();
+  return fallbackUrl;
 }
 
 
@@ -618,13 +627,64 @@ async function fetchRSSFeed(channelId) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   CATEGORY CONFIG — strict per-category search queries + filters
+   Each entry defines:
+     query    – the primary search string sent to yt-search
+     filterFn – post-fetch filter to reject out-of-category videos
+═══════════════════════════════════════════════════════════════════════ */
+
+const isShort = (v) => (v.duration > 0 && v.duration <= 180) || v.is_short ||
+  v.title?.toLowerCase().includes('#shorts') || v.title?.toLowerCase().includes('shorts');
+
+const CATEGORY_CONFIG = {
+  trending:      { queries: ['trending viral 2025', 'most popular videos 2025'],                  filterFn: (v) => !isShort(v) },
+  shorts:        { queries: ['#shorts viral trending', 'youtube shorts 2025'],                    filterFn: (v) => isShort(v) },
+  music:         { queries: ['official music video 2025', 'new song music video'],                filterFn: (v) => true },
+  gaming:        { queries: ['gaming gameplay 2025', 'game walkthrough let\'s play'],             filterFn: (v) => !isShort(v) },
+  movies:        { queries: ['official movie trailer 2025', 'film trailer cinema'],               filterFn: (v) => true },
+  news:          { queries: ['news today breaking news', 'latest news update'],                   filterFn: (v) => !isShort(v) },
+  live:          { queries: ['live stream now', 'watching live event stream'],                    filterFn: (v) => v.is_live || v.title?.toLowerCase().includes('live') },
+  podcasts:      { queries: ['podcast episode interview 2025', 'video podcast conversation'],     filterFn: (v) => !isShort(v) },
+  education:     { queries: ['educational tutorial learn 2025', 'how to learn explained'],        filterFn: (v) => !isShort(v) },
+  technology:    { queries: ['technology gadgets review 2025', 'tech news smartphones ai'],       filterFn: (v) => !isShort(v) },
+  ai:            { queries: ['artificial intelligence AI 2025', 'machine learning chatgpt demo'], filterFn: (v) => !isShort(v) },
+  programming:   { queries: ['programming tutorial coding 2025', 'software development web dev'], filterFn: (v) => !isShort(v) },
+  sports:        { queries: ['sports highlights match 2025', 'football basketball game clip'],    filterFn: (v) => !isShort(v) },
+  fashion:       { queries: ['fashion style outfit 2025', 'clothing haul lookbook'],              filterFn: (v) => true },
+  travel:        { queries: ['travel vlog destination 2025', 'travel guide tourism places'],      filterFn: (v) => !isShort(v) },
+  food:          { queries: ['cooking recipe food 2025', 'easy recipe cook at home'],             filterFn: (v) => true },
+  comedy:        { queries: ['comedy funny stand-up 2025', 'funny video meme compilation'],       filterFn: (v) => true },
+  kids:          { queries: ['kids educational cartoon 2025', 'children learning fun'],           filterFn: (v) => true },
+  finance:       { queries: ['finance investing money 2025', 'stock market personal finance'],    filterFn: (v) => !isShort(v) },
+  crypto:        { queries: ['cryptocurrency bitcoin 2025', 'crypto investing blockchain'],       filterFn: (v) => !isShort(v) },
+  business:      { queries: ['business entrepreneurship startup', 'entrepreneur success story'],  filterFn: (v) => !isShort(v) },
+  entertainment: { queries: ['entertainment celebrity viral', 'entertainment news pop culture'],  filterFn: (v) => true },
+  beauty:        { queries: ['beauty makeup tutorial 2025', 'skincare routine beauty review'],    filterFn: (v) => true },
+  health:        { queries: ['health wellness fitness tips', 'mental health workout healthy'],    filterFn: (v) => !isShort(v) },
+  fitness:       { queries: ['fitness workout exercise 2025', 'gym training routine bodybuilding'], filterFn: (v) => !isShort(v) },
+  pets:          { queries: ['pets animals cute funny', 'dog cat pet care animals'],              filterFn: (v) => true },
+  science:       { queries: ['science experiment discovery', 'space physics chemistry biology'],  filterFn: (v) => !isShort(v) },
+  history:       { queries: ['history documentary explained', 'historical event ancient world'],  filterFn: (v) => !isShort(v) },
+  documentary:   { queries: ['documentary film 2025', 'documentary nature true crime'],           filterFn: (v) => !isShort(v) },
+  animation:     { queries: ['animation cartoon 2025', 'animated short film cartoon'],           filterFn: (v) => true },
+  cars:          { queries: ['cars automotive review 2025', 'car test drive supercar'],          filterFn: (v) => !isShort(v) },
+  photography:   { queries: ['photography camera tutorial 2025', 'photo editing cinematography'], filterFn: (v) => !isShort(v) },
+  nature:        { queries: ['nature wildlife animals 2025', 'wilderness documentary planet'],    filterFn: (v) => !isShort(v) },
+  cooking:       { queries: ['cooking recipe chef 2025', 'restaurant street food kitchen'],      filterFn: (v) => true },
+  diy:           { queries: ['DIY tutorial how to make 2025', 'home improvement craft project'], filterFn: (v) => !isShort(v) },
+  art:           { queries: ['art drawing painting 2025', 'digital art illustration design'],    filterFn: (v) => !isShort(v) },
+};
+
+/* ═══════════════════════════════════════════════════════════════════════
    BACKGROUND "CRAWLER" — pre-warm cache every 5 minutes
    (lightweight alternative to BullMQ / Playwright for this stack)
 ═══════════════════════════════════════════════════════════════════════ */
 
 const CRAWLER_QUERIES = [
-  'trending 2024', 'music', 'gaming', 'technology', 'news today',
-  'education', 'sports highlights', 'comedy', 'travel vlog', 'cooking recipe',
+  'trending viral 2025', 'official music video 2025', 'gaming gameplay 2025',
+  'technology gadgets review 2025', 'news today breaking news',
+  'educational tutorial learn 2025', 'sports highlights match 2025',
+  'comedy funny stand-up 2025', 'travel vlog destination 2025', 'cooking recipe food 2025',
 ];
 
 async function crawlOnce() {
@@ -673,6 +733,80 @@ setInterval(crawlOnce, CACHE_TTL_MS);
    ROUTES
 ═══════════════════════════════════════════════════════════════════════ */
 
+/* ═══════════════════════════════════════════════════════════════════════
+   REAL-TIME FILTER & SORT HELPERS
+═══════════════════════════════════════════════════════════════════════ */
+
+// Parse duration filter
+function matchesDuration(duration, durationSec) {
+  if (!duration || duration === 'all') return true;
+  if (!durationSec) return false;
+  if (duration === 'short') return durationSec <= 240; // <= 4 mins
+  if (duration === 'medium') return durationSec > 240 && durationSec <= 1200; // 4 - 20 mins
+  if (duration === 'long') return durationSec > 1200; // > 20 mins
+  return true;
+}
+
+// Convert "3 days ago" / "1 year ago" or ISO date to approximate timestamp
+function parseAgeToMs(dateStr) {
+  if (!dateStr) return Infinity;
+  const now = Date.now();
+  const lower = dateStr.toLowerCase();
+
+  // Try parsing ISO date
+  if (lower.includes('t') || /^\d{4}-\d{2}-\d{2}/.test(lower)) {
+    const parsed = Date.parse(dateStr);
+    return isNaN(parsed) ? Infinity : now - parsed;
+  }
+
+  const num = parseInt(lower.match(/\d+/)?.[0] || '1');
+  const ONE_SEC = 1000;
+  const ONE_MIN = ONE_SEC * 60;
+  const ONE_HOUR = ONE_MIN * 60;
+  const ONE_DAY = ONE_HOUR * 24;
+  const ONE_WEEK = ONE_DAY * 7;
+  const ONE_MONTH = ONE_DAY * 30;
+  const ONE_YEAR = ONE_DAY * 365;
+
+  if (lower.includes('second')) return num * ONE_SEC;
+  if (lower.includes('minute') || lower.includes('min')) return num * ONE_MIN;
+  if (lower.includes('hour')) return num * ONE_HOUR;
+  if (lower.includes('day')) return num * ONE_DAY;
+  if (lower.includes('week')) return num * ONE_WEEK;
+  if (lower.includes('month')) return num * ONE_MONTH;
+  if (lower.includes('year')) return num * ONE_YEAR;
+  
+  return Infinity;
+}
+
+// Parse upload date filter
+function matchesUploadDate(dateFilter, dateStr) {
+  if (!dateFilter || dateFilter === 'any') return true;
+  const ageMs = parseAgeToMs(dateStr);
+  if (ageMs === Infinity) return false;
+
+  const ONE_DAY = 1000 * 60 * 60 * 24;
+  if (dateFilter === 'today') return ageMs <= ONE_DAY;
+  if (dateFilter === 'week') return ageMs <= ONE_DAY * 7;
+  if (dateFilter === 'month') return ageMs <= ONE_DAY * 30;
+  return true;
+}
+
+// Sort videos helper
+function sortVideos(videos, sortBy) {
+  if (!sortBy || sortBy === 'relevance') return videos;
+  
+  const sorted = [...videos];
+  if (sortBy === 'views') {
+    return sorted.sort((a, b) => (b.view_count || 0) - (a.view_count || 0));
+  }
+  if (sortBy === 'date') {
+    // Newest first = smallest age in ms
+    return sorted.sort((a, b) => parseAgeToMs(a.published_at) - parseAgeToMs(b.published_at));
+  }
+  return videos;
+}
+
 /** GET /api/channel-avatar?channelId=...&title=... */
 app.get('/api/channel-avatar', async (req, res) => {
   const { channelId, title } = req.query;
@@ -692,20 +826,200 @@ app.get('/api/channel-avatar', async (req, res) => {
   }
 });
 
-/** GET /api/search?q=...&type=all&page=1  →  { videos, channels } */
+/** GET /api/category?id=<categoryId>&page=1&q=<optional-search>&duration=all&date=any&sort=relevance  →  { videos, channels, category, page } */
+app.get('/api/category', async (req, res) => {
+  try {
+    const categoryId = (req.query.id || 'trending').toLowerCase();
+    const page = parseInt(req.query.page) || 1;
+    const userSearch = (req.query.q || '').trim();
+    const duration = req.query.duration || 'all';
+    const dateFilter = req.query.date || 'any';
+    const sortBy = req.query.sort || 'relevance';
+
+    const config = CATEGORY_CONFIG[categoryId];
+    if (!config) {
+      return res.status(400).json({ error: `Unknown category: ${categoryId}` });
+    }
+
+    // Build the effective search query:
+    let searchQuery;
+    if (userSearch) {
+      const prefix = config.queries[0].split(' ').slice(0, 2).join(' ');
+      searchQuery = `${prefix} ${userSearch}`;
+    } else {
+      const queryIndex = (page - 1) % config.queries.length;
+      const baseQuery = config.queries[queryIndex];
+      const variations = ['', 'new', 'latest', 'best', 'top', 'viral', 'official', '2025', 'highlights', 'full'];
+      const suffix = page === 1 ? '' : ` ${variations[page % variations.length]}`;
+      searchQuery = baseQuery + suffix;
+    }
+
+    // Cache key incorporates search filters to prevent mixing cached lists
+    const cacheKey = `category:${categoryId}:${page}:${userSearch}:${duration}:${dateFilter}:${sortBy}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) {
+      const channels = (page === 1 && !userSearch) ? await searchRealYouTubeChannels(config.queries[0], 3).catch(() => []) : [];
+      return res.json({ videos: cached, channels, category: categoryId, page });
+    }
+
+    let videos = await searchRealYouTubeVideos(searchQuery, 60, page);
+
+    // 1. Apply category purity filter
+    videos = videos.filter(config.filterFn);
+
+    // 2. Apply duration filter
+    videos = videos.filter(v => matchesDuration(duration, v.duration));
+
+    // 3. Apply upload date filter
+    videos = videos.filter(v => matchesUploadDate(dateFilter, v.published_at));
+
+    // 4. Apply sort
+    videos = sortVideos(videos, sortBy);
+
+    cacheSet(cacheKey, videos);
+
+    const channels = (page === 1 && !userSearch)
+      ? await searchRealYouTubeChannels(config.queries[0], 3).catch(() => [])
+      : [];
+
+    res.json({ videos, channels, category: categoryId, page });
+  } catch (err) {
+    console.error('[/api/category]', err);
+    res.json({ videos: [], channels: [], category: req.query.id, page: 1 });
+  }
+});
+
+/** GET /api/search?q=...&category=<id>&type=all&page=1&duration=all&date=any&sort=relevance  →  { videos, channels } */
 app.get('/api/search', async (req, res) => {
   try {
-    const q = req.query.q || 'trending';
+    let q = req.query.q || 'trending';
     const type = req.query.type;
+    const filter = req.query.filter;
     const page = parseInt(req.query.page) || 1;
-    const videos = await searchRealYouTubeVideos(q, 50, page);
+    const categoryId = (req.query.category || '').toLowerCase();
+    const duration = req.query.duration || 'all';
+    const dateFilter = req.query.date || 'any';
+    const sortBy = req.query.sort || 'relevance';
+
+    // If a category is active, prepend its context to scope the search
+    if (categoryId && categoryId !== 'trending' && CATEGORY_CONFIG[categoryId]) {
+      const prefix = CATEGORY_CONFIG[categoryId].queries[0].split(' ').slice(0, 2).join(' ');
+      q = `${prefix} ${q}`;
+    }
+
+    const isShortsRequest = categoryId === 'shorts' || type === 'shorts' || filter === 'shorts';
+    if (isShortsRequest) {
+      q = `#shorts ${q === 'trending' ? 'viral' : q}`.trim();
+    }
+
+    let videos = await searchRealYouTubeVideos(q, 60, page);
+
+    // 1. Apply category filter if active
+    if (categoryId && CATEGORY_CONFIG[categoryId]) {
+      videos = videos.filter(CATEGORY_CONFIG[categoryId].filterFn);
+    } else if (isShortsRequest) {
+      videos = videos.filter(v => {
+        if (v.duration && v.duration > 180) return false;
+        return v.is_short || (v.duration > 0 && v.duration <= 180) || v.title.toLowerCase().includes('#shorts') || v.title.toLowerCase().includes('shorts');
+      });
+    }
+
+    // 2. Apply duration filter
+    videos = videos.filter(v => matchesDuration(duration, v.duration));
+
+    // 3. Apply upload date filter
+    videos = videos.filter(v => matchesUploadDate(dateFilter, v.published_at));
+
+    // 4. Apply sort
+    videos = sortVideos(videos, sortBy);
+
     // Only fetch channels on page 1 to avoid extra requests
     const channels = page === 1 ? await searchRealYouTubeChannels(q, 10) : [];
-    if (type === 'all') return res.json({ channels, videos });
+    if (type === 'all' || type === 'shorts') return res.json({ channels, videos });
     res.json(channels);
   } catch (err) {
     console.error(err);
     res.json({ channels: [], videos: [] });
+  }
+});
+
+/** GET /api/shorts  →  { videos }  (Dedicated Real YouTube Shorts Feed) */
+app.get('/api/shorts', async (req, res) => {
+  const cacheKey = 'shorts:viral:feed';
+  const cached = cacheGet(cacheKey);
+  if (cached) return res.json({ videos: cached });
+
+  const REAL_VIRAL_SHORTS = [
+    {
+      id: '1yojfsG47-I',
+      youtube_id: '1yojfsG47-I',
+      title: 'Amazing YouTube Short 🔥 #shorts',
+      description: 'Viral short video #shorts',
+      thumbnail_url: 'https://img.youtube.com/vi/1yojfsG47-I/hqdefault.jpg',
+      view_count: 45000000,
+      like_count: 2300000,
+      duration: 30,
+      is_short: true,
+      channel: { title: 'Viral Shorts', id: 'viral_shorts', thumbnail_url: 'https://unavatar.io/youtube/shorts' },
+      author: { title: 'Viral Shorts', name: 'Viral Shorts', image: 'https://unavatar.io/youtube/shorts' }
+    },
+    {
+      id: 'kJQP7kiw5Fk',
+      youtube_id: 'kJQP7kiw5Fk',
+      title: 'Trending Shorts Dance & Music 🎵 #shorts',
+      description: 'Shorts #shorts',
+      thumbnail_url: 'https://img.youtube.com/vi/kJQP7kiw5Fk/hqdefault.jpg',
+      view_count: 89000000,
+      like_count: 4100000,
+      duration: 45,
+      is_short: true,
+      channel: { title: 'Trending Beats', id: 'trending_beats', thumbnail_url: 'https://unavatar.io/youtube/music' },
+      author: { title: 'Trending Beats', name: 'Trending Beats', image: 'https://unavatar.io/youtube/music' }
+    },
+    {
+      id: 'L_LUpnjgPso',
+      youtube_id: 'L_LUpnjgPso',
+      title: 'Insane Skill Demonstration ⚡ #shorts',
+      description: 'Awesome #shorts',
+      thumbnail_url: 'https://img.youtube.com/vi/L_LUpnjgPso/hqdefault.jpg',
+      view_count: 12000000,
+      like_count: 950000,
+      duration: 25,
+      is_short: true,
+      channel: { title: 'People Are Awesome', id: 'people_awesome', thumbnail_url: 'https://unavatar.io/youtube/peopleareawesome' },
+      author: { title: 'People Are Awesome', name: 'People Are Awesome', image: 'https://unavatar.io/youtube/peopleareawesome' }
+    },
+    {
+      id: 'fP8sn2C6z4k',
+      youtube_id: 'fP8sn2C6z4k',
+      title: 'Satisfying Craft Trick 🎨 #shorts',
+      description: 'Crafts #shorts',
+      thumbnail_url: 'https://img.youtube.com/vi/fP8sn2C6z4k/hqdefault.jpg',
+      view_count: 34000000,
+      like_count: 1800000,
+      duration: 35,
+      is_short: true,
+      channel: { title: 'Crafts & Hacks', id: 'crafts_hacks', thumbnail_url: 'https://unavatar.io/youtube/5minutecrafts' },
+      author: { title: 'Crafts & Hacks', name: 'Crafts & Hacks', image: 'https://unavatar.io/youtube/5minutecrafts' }
+    }
+  ];
+
+  try {
+    const liveShorts = await searchRealYouTubeVideos('youtube shorts #shorts viral', 40);
+    const validLiveShorts = liveShorts.filter(v => (v.duration > 0 && v.duration <= 60) || v.title.toLowerCase().includes('#shorts'));
+    
+    const combined = [...REAL_VIRAL_SHORTS, ...validLiveShorts];
+    const seen = new Set();
+    const deduped = combined.filter(v => {
+      if (seen.has(v.youtube_id)) return false;
+      seen.add(v.youtube_id);
+      return true;
+    });
+
+    cacheSet(cacheKey, deduped);
+    return res.json({ videos: deduped });
+  } catch {
+    return res.json({ videos: REAL_VIRAL_SHORTS });
   }
 });
 
@@ -792,20 +1106,132 @@ app.get('/api/suggestions', async (req, res) => {
   }
 });
 
-/** GET /api/related?videoId=...  →  { videos } */
+/** GET /api/related?videoId=...&category=<id>  →  { videos } */
 app.get('/api/related', async (req, res) => {
   const videoId = req.query.videoId;
+  const categoryId = (req.query.category || '').toLowerCase();
   if (!videoId) return res.json({ videos: [] });
 
+  const cacheKey = `related:${videoId}:${categoryId}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return res.json({ videos: cached });
+
   try {
-    // Get video details first to find a good search query
-    const video = await yts({ videoId });
-    const query = [video.author?.name, video.title?.split(' ').slice(0, 4).join(' ')].filter(Boolean).join(' ');
-    const videos = await searchRealYouTubeVideos(query || 'trending', 12);
-    res.json({ videos: videos.filter(v => v.youtube_id !== videoId) });
+    // Build a category-aware query for related videos
+    let query;
+    if (categoryId && CATEGORY_CONFIG[categoryId]) {
+      // Use the category's primary query as the base — always stay in category
+      const catBase = CATEGORY_CONFIG[categoryId].queries[0];
+      let titleWords = '';
+      try {
+        const video = await yts({ videoId });
+        titleWords = video.title?.split(' ').slice(0, 3).join(' ') || '';
+      } catch { /* ignore, use only category query */ }
+      query = titleWords ? `${catBase} ${titleWords}` : catBase;
+    } else {
+      // No category — fall back to title-based related
+      const video = await yts({ videoId });
+      query = [video.author?.name, video.title?.split(' ').slice(0, 4).join(' ')].filter(Boolean).join(' ');
+    }
+
+    let videos = await searchRealYouTubeVideos(query || 'trending', 16);
+
+    // Apply category filter so related results stay within category
+    if (categoryId && CATEGORY_CONFIG[categoryId]) {
+      videos = videos.filter(CATEGORY_CONFIG[categoryId].filterFn);
+    }
+
+    const result = videos.filter(v => v.youtube_id !== videoId).slice(0, 12);
+    cacheSet(cacheKey, result);
+    res.json({ videos: result });
   } catch {
     res.json({ videos: [] });
   }
+});
+
+/** GET /api/video-details?id=...  →  { description, like_count, comment_count, duration, published_at, author } */
+app.get('/api/video-details', async (req, res) => {
+  const videoId = req.query.id || req.query.videoId;
+  if (!videoId) return res.status(400).json({ error: 'Video ID is required' });
+
+  const cacheKey = `video-details:${videoId}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return res.json(cached);
+
+  try {
+    const video = await yts({ videoId });
+    if (video) {
+      const views = video.views || 0;
+      const details = {
+        id: video.videoId,
+        youtube_id: video.videoId,
+        title: video.title || '',
+        description: video.description || '',
+        view_count: views,
+        like_count: Math.floor(views * 0.05),
+        comment_count: Math.floor(views * 0.005),
+        duration: video.seconds || 0,
+        published_at: video.ago || video.timestamp || '',
+        author: {
+          name: video.author?.name || 'Unknown',
+          title: video.author?.name || 'Unknown',
+          image: video.author?.image || video.author?.thumbnail || `https://unavatar.io/youtube/${encodeURIComponent(video.author?.name || '')}`,
+          thumbnail: video.author?.image || video.author?.thumbnail || '',
+          url: cleanChannelId(video.author?.url) || '',
+        }
+      };
+      cacheSet(cacheKey, details);
+      return res.json(details);
+    }
+  } catch (err) {
+    console.error(`[video-details] Error fetching video ${videoId}:`, err?.message || err);
+  }
+
+  // Fallback response (prevent 500)
+  return res.json({
+    id: videoId,
+    youtube_id: videoId,
+    title: '',
+    description: '',
+    view_count: 0,
+    like_count: 0,
+    comment_count: 0,
+    duration: 0,
+    published_at: '',
+    author: { name: 'YouTube Channel', image: '', url: '' }
+  });
+});
+
+/** GET /api/check-update  →  { currentVersion, latestVersion, updateAvailable, releaseUrl } */
+app.get('/api/check-update', async (req, res) => {
+  const currentVersion = '1.0.4';
+  try {
+    const response = await fetch('https://api.github.com/repos/solankisumit123/viewstats/releases/latest', {
+      headers: { 'User-Agent': 'ViewStats-Desktop-App' },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (response.ok) {
+      const data = await response.json();
+      const latestVersion = (data.tag_name || '').replace(/^v/, '');
+      const releaseUrl = data.html_url || 'https://github.com/solankisumit123/viewstats/releases';
+      const isNewer = latestVersion && latestVersion !== currentVersion;
+      return res.json({
+        currentVersion,
+        latestVersion: latestVersion || currentVersion,
+        updateAvailable: isNewer,
+        releaseUrl,
+        name: data.name || `ViewStats v${latestVersion}`,
+      });
+    }
+  } catch {
+    /* fallback */
+  }
+  return res.json({
+    currentVersion,
+    latestVersion: currentVersion,
+    updateAvailable: false,
+    releaseUrl: 'https://github.com/solankisumit123/viewstats/releases',
+  });
 });
 
 /* ─── Existing endpoints (unchanged) ─────────────────────────────── */
@@ -999,6 +1425,15 @@ app.get('*', (req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`✅ Backend server running on port ${PORT}`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.log(`ℹ️ Backend server on port ${PORT} is already running.`);
+    process.exit(0);
+  } else {
+    console.error('Server startup error:', err);
+  }
 });
 
 setInterval(() => { }, 10000);

@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import type { SyntheticEvent } from 'react'
 import { motion } from 'framer-motion'
-import { Play, Eye, Clock, Radio, Zap, CheckCircle2 } from 'lucide-react'
+import { Play, Eye, Clock, Radio, Zap, CheckCircle2, Bookmark } from 'lucide-react'
 import { ChannelAvatar } from '../ChannelAvatar'
 
 export interface VideoData {
@@ -88,6 +89,39 @@ export function VideoCard({ video, onClick, index = 0, layout = 'grid' }: VideoC
   const [thumbIndex, setThumbIndex] = useState(0)
 
   const vid = video.youtube_id
+
+  // Check if saved in localStorage Watch Later
+  const checkIfSaved = () => {
+    try {
+      const list = JSON.parse(localStorage.getItem('watch_later') || '[]')
+      return list.some((item: any) => item.youtube_id === vid)
+    } catch {
+      return false
+    }
+  }
+  const [isSaved, setIsSaved] = useState(checkIfSaved)
+
+  const handleBookmark = (e: SyntheticEvent<HTMLElement>) => {
+    e.stopPropagation()
+    try {
+      const list = JSON.parse(localStorage.getItem('watch_later') || '[]')
+      if (isSaved) {
+        const filtered = list.filter((item: any) => item.youtube_id !== vid)
+        localStorage.setItem('watch_later', JSON.stringify(filtered))
+        setIsSaved(false)
+        // Dispatch custom event to trigger real-time UI refresh in YouTubeBrowser if it is active
+        window.dispatchEvent(new Event('watch-later-updated'))
+      } else {
+        // Save the full video details so we can render it without API calls
+        list.push(video)
+        localStorage.setItem('watch_later', JSON.stringify(list))
+        setIsSaved(true)
+        window.dispatchEvent(new Event('watch-later-updated'))
+      }
+    } catch (err) {
+      console.error('Failed to toggle watch later:', err)
+    }
+  }
   const channelName = video.channel?.title || video.author?.title || video.author?.name || 'Unknown'
   const channelAvatar = video.channel?.thumbnail_url || video.author?.image || video.author?.thumbnail || ''
   const channelId = video.channel?.id || video.author?.url || ''
@@ -140,6 +174,26 @@ export function VideoCard({ video, onClick, index = 0, layout = 'grid' }: VideoC
               <Radio className="w-2.5 h-2.5" /> LIVE
             </span>
           )}
+          {/* Bookmark Button */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={handleBookmark}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                handleBookmark(e)
+              }
+            }}
+            className={`absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all
+              ${isSaved
+                ? 'bg-youtube text-white shadow-sm'
+                : 'bg-black/60 text-white/80 hover:text-white hover:bg-black/80'
+              }`}
+            title={isSaved ? "Remove from Watch Later" : "Watch Later"}
+          >
+            <Bookmark className={`w-3.5 h-3.5 ${isSaved ? 'fill-white' : ''}`} />
+          </div>
         </div>
         <div className="flex-1 min-w-0 py-0.5 space-y-1">
           <div className="text-xs font-semibold line-clamp-2 group-hover:text-youtube transition-colors leading-snug">
@@ -209,6 +263,27 @@ export function VideoCard({ video, onClick, index = 0, layout = 'grid' }: VideoC
           {isHD && !is4K && !isShort && (
             <span className="bg-black/60 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-sm">HD</span>
           )}
+        </div>
+
+        {/* Bookmark Overlay Button */}
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={handleBookmark}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              handleBookmark(e)
+            }
+          }}
+          className={`absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center backdrop-blur-md transition-all z-10
+            ${isSaved
+              ? 'bg-youtube text-white shadow-md scale-105'
+              : 'bg-black/50 text-white/80 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100'
+            }`}
+          title={isSaved ? "Remove from Watch Later" : "Watch Later"}
+        >
+          <Bookmark className={`w-4 h-4 ${isSaved ? 'fill-white' : ''}`} />
         </div>
       </div>
 

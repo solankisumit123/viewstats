@@ -8,7 +8,12 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:3001',
-        changeOrigin: true
+        changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', () => {
+            // Silently suppress ECONNREFUSED logs while Express backend initializes
+          })
+        }
       }
     }
   }

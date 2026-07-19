@@ -100,16 +100,22 @@ export function ChannelAvatar({
           return
         }
       }
-    } catch (err) {
-      console.error('[avatar-retry] Error:', err)
+    } catch {
+      /* fallback below */
     }
-    setLoadFailed(true)
+
+    // Fallback CDN to unavatar / ui-avatars
+    const clean = searchId.replace(/^@/, '')
+    setCurrentSrc(`https://unavatar.io/youtube/${encodeURIComponent(clean)}`)
+    setLoadFailed(false)
   }
 
   const handleError = () => {
-    if (retryCount < 1 && (channelId || channelName)) {
-      setRetryCount(prev => prev + 1)
-      fetchFreshUrl()
+    if (retryCount === 0 && (channelId || channelName)) {
+      setRetryCount(1)
+      const name = channelName || 'Channel'
+      setCurrentSrc(`https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=FF0000&color=fff&bold=true`)
+      setLoadFailed(false)
     } else {
       setLoadFailed(true)
     }

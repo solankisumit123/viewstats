@@ -4,7 +4,7 @@ import {
   X, Play, Eye, ExternalLink, Share2, Copy, Check,
   ThumbsUp, MessageSquare, ChevronDown, ChevronUp,
   CheckCircle2, ArrowLeft, Radio, Loader2, Clock,
-  Hash, Volume2
+  Hash, Volume2, Sparkles, Bookmark
 } from 'lucide-react'
 import type { VideoData } from './VideoCard'
 import { formatViews, formatDuration, formatPublished } from './VideoCard'
@@ -25,10 +25,11 @@ function formatDate(val?: string) {
 
 interface VideoPlayerProps {
   video: VideoData
+  category?: string
   onClose: () => void
 }
 
-export function VideoPlayer({ video, onClose }: VideoPlayerProps) {
+export function VideoPlayer({ video, category = '', onClose }: VideoPlayerProps) {
   const [related, setRelated]             = useState<VideoData[]>([])
   const [loadingRelated, setLoadingRelated] = useState(true)
   const [copied, setCopied]               = useState(false)
@@ -36,6 +37,41 @@ export function VideoPlayer({ video, onClose }: VideoPlayerProps) {
   const [activeVideo, setActiveVideo]     = useState<VideoData>(video)
   const [thumbError, setThumbError]       = useState(false)
   const relatedRef = useRef<HTMLDivElement>(null)
+
+  const [ambientGlow, setAmbientGlow] = useState(true)
+
+  // Check if saved in localStorage Watch Later
+  const checkIfSaved = () => {
+    try {
+      const list = JSON.parse(localStorage.getItem('watch_later') || '[]')
+      return list.some((item: any) => item.youtube_id === activeVideo.youtube_id)
+    } catch {
+      return false
+    }
+  }
+  const [isSaved, setIsSaved] = useState(checkIfSaved)
+
+  useEffect(() => {
+    setIsSaved(checkIfSaved())
+  }, [activeVideo.youtube_id])
+
+  const handleBookmarkToggle = () => {
+    try {
+      const list = JSON.parse(localStorage.getItem('watch_later') || '[]')
+      if (isSaved) {
+        const filtered = list.filter((item: any) => item.youtube_id !== activeVideo.youtube_id)
+        localStorage.setItem('watch_later', JSON.stringify(filtered))
+        setIsSaved(false)
+      } else {
+        list.push(activeVideo)
+        localStorage.setItem('watch_later', JSON.stringify(list))
+        setIsSaved(true)
+      }
+      window.dispatchEvent(new Event('watch-later-updated'))
+    } catch (err) {
+      console.error('Failed to toggle watch later:', err)
+    }
+  }
 
   const channelName   = activeVideo.channel?.title || activeVideo.author?.title || activeVideo.author?.name || 'Unknown'
   const channelAvatar  = activeVideo.channel?.thumbnail_url || activeVideo.author?.image || activeVideo.author?.thumbnail || ''
@@ -80,15 +116,13 @@ export function VideoPlayer({ video, onClose }: VideoPlayerProps) {
       .catch(err => console.error('Error fetching details:', err));
   }, [activeVideo.youtube_id]);
 
-  /* fetch related */
-
+  /* fetch related — scoped to active category */
   useEffect(() => {
     setLoadingRelated(true)
     setRelated([])
-    const q = encodeURIComponent(
-      (channelName + ' ' + (activeVideo.title?.split(' ').slice(0, 5).join(' ') || '')).trim()
-    )
-    fetch(`/api/search?q=${q}&type=all`)
+    const params = new URLSearchParams({ videoId: activeVideo.youtube_id })
+    if (category) params.set('category', category)
+    fetch(`/api/related?${params}`)
       .then(r => r.json())
       .then(data => {
         const vids = (data.videos || []).filter((v: VideoData) => v.youtube_id !== activeVideo.youtube_id)
@@ -96,7 +130,7 @@ export function VideoPlayer({ video, onClose }: VideoPlayerProps) {
       })
       .catch(() => setRelated([]))
       .finally(() => setLoadingRelated(false))
-  }, [activeVideo.youtube_id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeVideo.youtube_id, category])
 
   /* lock body scroll */
   useEffect(() => {
@@ -172,32 +206,37 @@ export function VideoPlayer({ video, onClose }: VideoPlayerProps) {
             </button>
           </div>
 
-          {/* ══════════════════════════════════════
-              MAIN CONTENT
-          ══════════════════════════════════════ */}
-          <div className="max-w-[1600px] mx-auto px-3 sm:px-6 py-5
-                          grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6">
-
-            {/* ─── LEFT: Player + Info ─── */}
-            <div className="space-y-4">
-
+          {/* ══════════════════════════════════════ */}
+          {/* ─── LEFT: Player + Info ─── */}
+          <div className="space-y-4">
+ 
               {/* ── Embedded Player ── */}
-              <div
-                className="aspect-video w-full rounded-2xl overflow-hidden bg-black
-                            shadow-[0_0_60px_rgba(255,0,0,0.15)] ring-1 ring-white/5"
-                style={{ willChange: 'transform', transform: 'translate3d(0,0,0)' }}
-              >
-                <iframe
-                  key={activeVideo.youtube_id}
-                  src={`https://www.youtube.com/embed/${activeVideo.youtube_id}?autoplay=1&modestbranding=1&rel=0&color=red&playsinline=1&enablejsapi=1&iv_load_policy=3&fs=1&origin=${encodeURIComponent(window.location.origin)}`}
-                  title={activeVideo.title}
-                  frameBorder="0"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowFullScreen
-                  loading="eager"
-                  className="w-full h-full"
-                  style={{ border: 'none' }}
-                />
+              <div className="relative">
+                {/* Cinema Mode Ambient Glow */}
+                {ambientGlow && (
+                  <div
+                    className="absolute -inset-4 bg-cover bg-center rounded-3xl opacity-50 filter blur-[80px] saturate-[1.8] pointer-events-none transition-all duration-1000 z-0 scale-105"
+                    style={{ backgroundImage: `url(${thumb})` }}
+                  />
+                )}
+                
+                <div
+                  className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative z-10
+                              shadow-[0_0_60px_rgba(0,0,0,0.8)] ring-1 ring-white/10"
+                  style={{ willChange: 'transform', transform: 'translate3d(0,0,0)' }}
+                >
+                  <iframe
+                    key={activeVideo.youtube_id}
+                    src={`https://www.youtube.com/embed/${activeVideo.youtube_id}?autoplay=1&modestbranding=1&rel=0&color=red&playsinline=1&enablejsapi=1&iv_load_policy=3&fs=1&origin=${encodeURIComponent(window.location.origin)}`}
+                    title={activeVideo.title}
+                    frameBorder="0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                    loading="eager"
+                    className="w-full h-full"
+                    style={{ border: 'none' }}
+                  />
+                </div>
               </div>
 
               {/* ── Info Card ── */}
@@ -275,6 +314,28 @@ export function VideoPlayer({ video, onClose }: VideoPlayerProps) {
                     <ExternalLink className="w-3.5 h-3.5 opacity-70" />
                   </a>
                   <button
+                    onClick={handleBookmarkToggle}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors border
+                      ${isSaved
+                        ? 'bg-youtube/10 border-youtube/30 text-youtube hover:bg-youtube/20'
+                        : 'bg-white/8 border-white/10 text-white/80 hover:bg-white/15'
+                      }`}
+                  >
+                    <Bookmark className={`w-4 h-4 ${isSaved ? 'fill-white' : ''}`} />
+                    {isSaved ? 'Saved' : 'Watch Later'}
+                  </button>
+                  <button
+                    onClick={() => setAmbientGlow(!ambientGlow)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors border
+                      ${ambientGlow
+                        ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20'
+                        : 'bg-white/8 border-white/10 text-white/80 hover:bg-white/15'
+                      }`}
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    {ambientGlow ? 'Glow On' : 'Glow Off'}
+                  </button>
+                  <button
                     onClick={copyUrl}
                     className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/8 text-white/80
                                text-sm font-medium hover:bg-white/15 transition-colors border border-white/10"
@@ -301,7 +362,7 @@ export function VideoPlayer({ video, onClose }: VideoPlayerProps) {
                 {activeVideo.description && (
                   <div className="rounded-xl bg-white/4 border border-white/6 p-4">
                     <div className={`text-sm text-white/60 leading-relaxed whitespace-pre-wrap
-                                    ${!descExpanded ? 'line-clamp-3' : ''}`}>
+                                    ${!descExpanded ? 'line-clamp-3' : ''}`}> 
                       {activeVideo.description}
                     </div>
                     <button
@@ -336,7 +397,9 @@ export function VideoPlayer({ video, onClose }: VideoPlayerProps) {
               {/* Header */}
               <div className="flex items-center gap-2 px-1">
                 <Radio className="w-4 h-4 text-youtube animate-pulse" />
-                <span className="text-white font-bold text-sm">Up Next</span>
+                <span className="text-white font-bold text-sm">
+                  {category ? `More ${category.charAt(0).toUpperCase() + category.slice(1)} Videos` : 'Up Next'}
+                </span>
                 {!loadingRelated && (
                   <span className="text-white/30 text-xs">({related.length})</span>
                 )}
@@ -371,7 +434,6 @@ export function VideoPlayer({ video, onClose }: VideoPlayerProps) {
                 }
               </div>
             </div>
-          </div>
         </motion.div>
       </motion.div>
     </AnimatePresence>

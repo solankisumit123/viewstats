@@ -4,8 +4,12 @@ node_modules/
 # Electron Build outputs - TOO LARGE for GitHub, upload to Releases manually
 dist/
 dist_electron/
+dist_app/
 release/
 out/
+
+# Electron build artifacts
+build/icon.ico
 
 # Binary files - never commit these
 *.exe

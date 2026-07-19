@@ -1,7 +1,7 @@
 {
   "name": "viewstats",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.4",
   "description": "ViewStats YouTube Desktop Browser",
   "author": "Solan",
   "type": "module",
@@ -12,7 +12,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"electron .\"",
-    "electron:build": "vite build && electron-builder"
+    "electron:build": "node build-app.cjs"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.14",
@@ -90,15 +90,21 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.ico"
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ViewStats",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
       "perMachine": false,
-      "allowToChangeInstallationDirectory": false,
       "deleteAppDataOnUninstall": false
     },
     "mac": {
@@ -135,7 +141,7 @@
       "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
     ],
     "directories": {
-      "output": "dist_electron"
+      "output": "dist_app"
     },
     "publish": [
       {

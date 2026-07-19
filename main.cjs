@@ -1,6 +1,7 @@
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow, dialog, shell, ipcMain } = require('electron');
 const path = require('path');
 const { fork } = require('child_process');
+const fs = require('fs');
 
 const isDev = !app.isPackaged;
 
@@ -11,79 +12,62 @@ let mainWindow = null;
 let autoUpdater = null;
 if (!isDev) {
   try {
-    const { autoUpdater: updater, NsisUpdater } = require('electron-updater');
+    const { autoUpdater: updater } = require('electron-updater');
     autoUpdater = updater;
 
     // Disable logger (avoids "this._logger.info is not a function" error)
     autoUpdater.logger = null;
     autoUpdater.autoDownload = false; // We'll ask user first
     autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.allowDowngrade = false;
+    autoUpdater.allowPrerelease = false;
 
-    // ── Update Available: ask user ──
+    // ── Update Available: Send IPC to React Renderer ──
     autoUpdater.on('update-available', (info) => {
-      dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: '🚀 New Update Available!',
-        message: `ViewStats v${info.version} is ready to download.`,
-        detail: `You are on v${app.getVersion()}. The new version includes improvements and bug fixes.\n\nWould you like to download and install it now?`,
-        buttons: ['Download Update', 'Later'],
-        defaultId: 0,
-        cancelId: 1,
-        icon: path.join(__dirname, 'build/icon.png')
-      }).then(({ response }) => {
-        if (response === 0) {
-          // Show downloading progress notification
-          dialog.showMessageBox(mainWindow, {
-            type: 'info',
-            title: 'Downloading Update…',
-            message: 'Update is being downloaded in the background.',
-            detail: 'The app will notify you when it\'s ready to install. You can continue using the app normally.',
-            buttons: ['OK'],
-            defaultId: 0
-          });
-          autoUpdater.downloadUpdate();
-        }
-      });
+      console.log('[AutoUpdater] Update available:', info?.version);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-available', info);
+      }
     });
 
-    // ── No Update: silently ignore ──
-    autoUpdater.on('update-not-available', () => {
+    // ── No Update ──
+    autoUpdater.on('update-not-available', (info) => {
       console.log('[AutoUpdater] App is up to date.');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-not-available', info);
+      }
     });
 
     // ── Download Progress ──
     autoUpdater.on('download-progress', (progress) => {
-      if (mainWindow) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setProgressBar(progress.percent / 100);
         mainWindow.setTitle(`ViewStats — Downloading update… ${Math.round(progress.percent)}%`);
+        mainWindow.webContents.send('download-progress', {
+          percent: Math.round(progress.percent),
+          bytesPerSecond: progress.bytesPerSecond,
+          transferred: progress.transferred,
+          total: progress.total,
+        });
       }
     });
 
-    // ── Downloaded: ask to restart ──
+    // ── Downloaded: Send IPC to React Renderer ──
     autoUpdater.on('update-downloaded', (info) => {
-      if (mainWindow) {
-        mainWindow.setProgressBar(-1); // clear progress bar
+      console.log('[AutoUpdater] Update downloaded:', info?.version);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setProgressBar(-1);
         mainWindow.setTitle('ViewStats Desktop');
+        mainWindow.webContents.send('update-downloaded', info);
       }
-      dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: '✅ Update Ready to Install!',
-        message: `ViewStats v${info.version} has been downloaded.`,
-        detail: 'Restart the app now to apply the update, or do it later when you close the app.',
-        buttons: ['Restart & Install Now', 'Install on Next Launch'],
-        defaultId: 0,
-        cancelId: 1,
-        icon: path.join(__dirname, 'build/icon.png')
-      }).then(({ response }) => {
-        if (response === 0) {
-          autoUpdater.quitAndInstall(false, true);
-        }
-      });
     });
 
     // ── Error Handling ──
     autoUpdater.on('error', (err) => {
       console.error('[AutoUpdater] Error:', err?.message || err);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-error', err?.message || 'Update failed');
+      }
     });
 
   } catch (e) {
@@ -91,11 +75,34 @@ if (!isDev) {
   }
 }
 
+// IPC Handlers for React Frontend
+ipcMain.handle('check-for-updates', () => {
+  if (autoUpdater) {
+    autoUpdater.checkForUpdates().catch(err => console.error('[AutoUpdater] Check error:', err?.message));
+  }
+});
+
+ipcMain.handle('download-update', () => {
+  if (autoUpdater) {
+    return autoUpdater.downloadUpdate().catch(err => console.error('[AutoUpdater] Download error:', err?.message));
+  }
+});
+
+ipcMain.handle('quit-and-install', () => {
+  if (autoUpdater) {
+    autoUpdater.quitAndInstall(false, true);
+  }
+});
+
 // Start the Express backend server
 function startServer() {
   const serverPath = path.join(__dirname, 'server.js');
+  const logPath = path.join(__dirname, 'server-error.log');
+  const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+
   // Pass ELECTRON=true to force server.js to use AppData write permissions
   serverProcess = fork(serverPath, [], {
+    silent: true,
     env: {
       ...process.env,
       PORT: '3001',
@@ -104,8 +111,27 @@ function startServer() {
     }
   });
 
+  serverProcess.stdout.on('data', (data) => {
+    const msg = `[Server STDOUT] ${data.toString()}`;
+    console.log(msg);
+    logStream.write(msg + '\n');
+  });
+
+  serverProcess.stderr.on('data', (data) => {
+    const msg = `[Server STDERR] ${data.toString()}`;
+    console.error(msg);
+    logStream.write(msg + '\n');
+  });
+
   serverProcess.on('error', (err) => {
     console.error('Failed to start Express backend:', err);
+    logStream.write(`Failed to start Express backend: ${err.stack || err}\n`);
+  });
+
+  serverProcess.on('exit', (code, signal) => {
+    const msg = `[Server Exit] code=${code} signal=${signal}`;
+    console.log(msg);
+    logStream.write(msg + '\n');
   });
 }
 
@@ -113,30 +139,42 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1340,
     height: 800,
+    minWidth: 1024,
+    minHeight: 600,
     webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
       // Enable hardware acceleration for smoother video playback
       backgroundThrottling: false,
     },
     title: 'ViewStats Desktop',
-    autoHideMenuBar: !isDev,
+    autoHideMenuBar: true,
     icon: path.join(__dirname, 'build/icon.png'),
     // Smooth rendering
     backgroundColor: '#0f0f11',
     show: false, // don't show until ready to avoid white flash
   });
 
+  // Open external links in user's default system browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
+
   // Show window only when fully ready (prevents white flash on startup)
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    // Check for updates after window is visible (2s delay to let app settle)
+    // Check for updates after window is visible (5s delay to let server & app fully settle)
     if (!isDev && autoUpdater) {
       setTimeout(() => {
         autoUpdater.checkForUpdates().catch(err => {
           console.error('[AutoUpdater] Check failed:', err?.message);
         });
-      }, 2000);
+      }, 5000);
     }
   });
 
@@ -158,10 +196,23 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
-  startServer();
-  createWindow();
-});
+// Enforce Single Instance Lock for proper desktop app behavior
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
+  app.whenReady().then(() => {
+    startServer();
+    createWindow();
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

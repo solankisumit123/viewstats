@@ -12,16 +12,16 @@ import { VideoPlayer } from '../components/youtube/VideoPlayer'
 import { SkeletonCard } from '../components/youtube/SkeletonCard'
 
 const TOP_10_CHANNELS = [
-  { id: 'UCX6OQ3DkcsbYNE6H8uQQuVA', title: 'MrBeast', subscriber_count: 360000000, category: 'Entertainment' },
-  { id: 'UCq-Fj5jknLsUf-MWSy4_brA', title: 'T-Series', subscriber_count: 280000000, category: 'Music' },
-  { id: 'UC-lHJZR3Gqxm24_Vd_AJ5Yw', title: 'PewDiePie', subscriber_count: 110000000, category: 'Gaming' },
-  { id: 'UCJ5v_1Y8wV8745_vGPELVEw', title: 'WWE', subscriber_count: 100000000, category: 'Sports' },
-  { id: 'UCbCmjCuTUZos6Inko4u57UQ', title: 'Cocomelon', subscriber_count: 170000000, category: 'Kids' },
-  { id: 'UCvgfXK5nDoCz0b3lt8TXG3w', title: 'Vlad and Niki', subscriber_count: 120000000, category: 'Kids' },
-  { id: 'UCjwl2neA1513vO5cM0dK7Dg', title: 'Like Nastya', subscriber_count: 115000000, category: 'Kids' },
-  { id: 'UCy8Yy5Fp-7XW38XkH5L-FQQ', title: 'Zee Music Company', subscriber_count: 105000000, category: 'Music' },
-  { id: 'UCRijo3ddMTht_IHyNSNXpNQ', title: 'Dude Perfect', subscriber_count: 60000000, category: 'Sports' },
-  { id: 'UCBJycsmduvYELgTAd88y6yQ', title: 'MKBHD', subscriber_count: 19000000, category: 'Technology' }
+  { id: 'UCX6OQ3DkcsbYNE6H8uQQuVA', title: 'MrBeast', subscriber_count: 360000000, category: 'Entertainment', avatar_url: 'https://unavatar.io/youtube/UCX6OQ3DkcsbYNE6H8uQQuVA' },
+  { id: 'UCq-Fj5jknLsUf-MWSy4_brA', title: 'T-Series', subscriber_count: 280000000, category: 'Music', avatar_url: 'https://unavatar.io/youtube/UCq-Fj5jknLsUf-MWSy4_brA' },
+  { id: 'UC-lHJZR3Gqxm24_Vd_AJ5Yw', title: 'PewDiePie', subscriber_count: 110000000, category: 'Gaming', avatar_url: 'https://unavatar.io/youtube/UC-lHJZR3Gqxm24_Vd_AJ5Yw' },
+  { id: 'UCJ5v_1Y8wV8745_vGPELVEw', title: 'WWE', subscriber_count: 100000000, category: 'Sports', avatar_url: 'https://unavatar.io/youtube/UCJ5v_1Y8wV8745_vGPELVEw' },
+  { id: 'UCbCmjCuTUZos6Inko4u57UQ', title: 'Cocomelon', subscriber_count: 170000000, category: 'Kids', avatar_url: 'https://unavatar.io/youtube/UCbCmjCuTUZos6Inko4u57UQ' },
+  { id: 'UCvgfXK5nDoCz0b3lt8TXG3w', title: 'Vlad and Niki', subscriber_count: 120000000, category: 'Kids', avatar_url: 'https://unavatar.io/youtube/UCvgfXK5nDoCz0b3lt8TXG3w' },
+  { id: 'UCjwl2neA1513vO5cM0dK7Dg', title: 'Like Nastya', subscriber_count: 115000000, category: 'Kids', avatar_url: 'https://unavatar.io/youtube/UCjwl2neA1513vO5cM0dK7Dg' },
+  { id: 'UCy8Yy5Fp-7XW38XkH5L-FQQ', title: 'Zee Music Company', subscriber_count: 105000000, category: 'Music', avatar_url: 'https://unavatar.io/youtube/UCy8Yy5Fp-7XW38XkH5L-FQQ' },
+  { id: 'UCRijo3ddMTht_IHyNSNXpNQ', title: 'Dude Perfect', subscriber_count: 60000000, category: 'Sports', avatar_url: 'https://unavatar.io/youtube/UCRijo3ddMTht_IHyNSNXpNQ' },
+  { id: 'UCBJycsmduvYELgTAd88y6yQ', title: 'MKBHD', subscriber_count: 19000000, category: 'Technology', avatar_url: 'https://unavatar.io/youtube/UCBJycsmduvYELgTAd88y6yQ' }
 ]
 
 function formatNumber(n: number) {
@@ -53,7 +53,15 @@ export function HomePage() {
     fetch('/api/trending')
       .then(res => res.json())
       .then(data => {
-        setVideos(data.videos || [])
+        const cleanVids: VideoData[] = []
+        const seen = new Set<string>()
+        for (const v of data.videos || []) {
+          if (v.youtube_id && !seen.has(v.youtube_id)) {
+            seen.add(v.youtube_id)
+            cleanVids.push(v)
+          }
+        }
+        setVideos(cleanVids)
         setLoading(false)
       })
       .catch(err => {
@@ -79,7 +87,11 @@ export function HomePage() {
         if (newVids.length === 0) {
           setHasMore(false)
         } else {
-          setVideos(prev => [...prev, ...newVids])
+          setVideos(prev => {
+            const seen = new Set(prev.map(v => v.youtube_id))
+            const fresh = newVids.filter((v: VideoData) => v.youtube_id && !seen.has(v.youtube_id))
+            return [...prev, ...fresh]
+          })
         }
       })
       .catch(err => {
@@ -116,7 +128,15 @@ export function HomePage() {
     fetch(`/api/search?q=${encodeURIComponent(channelTitle)}&type=all&page=1`)
       .then(res => res.json())
       .then(data => {
-        setVideos(data.videos || [])
+        const cleanVids: VideoData[] = []
+        const seen = new Set<string>()
+        for (const v of data.videos || []) {
+          if (v.youtube_id && !seen.has(v.youtube_id)) {
+            seen.add(v.youtube_id)
+            cleanVids.push(v)
+          }
+        }
+        setVideos(cleanVids)
         setLoading(false)
       })
       .catch(err => {
@@ -133,7 +153,15 @@ export function HomePage() {
     fetch('/api/trending')
       .then(res => res.json())
       .then(data => {
-        setVideos(data.videos || [])
+        const cleanVids: VideoData[] = []
+        const seen = new Set<string>()
+        for (const v of data.videos || []) {
+          if (v.youtube_id && !seen.has(v.youtube_id)) {
+            seen.add(v.youtube_id)
+            cleanVids.push(v)
+          }
+        }
+        setVideos(cleanVids)
         setLoading(false)
       })
       .catch(err => {
@@ -173,6 +201,7 @@ export function HomePage() {
                 </div>
                 <ChannelAvatar
                   channelName={channel.title}
+                  channelAvatarUrl={channel.avatar_url}
                   channelId={channel.id}
                   size={44}
                 />
@@ -200,7 +229,7 @@ export function HomePage() {
         <div className="flex items-center justify-between border-b border-border/60 pb-3">
           <div className="flex items-center gap-2.5">
             <Sparkles className="w-5 h-5 text-youtube" />
-            <h2 className="text-xl font-extrabold tracking-tight text-white">
+            <h2 className="text-xl font-extrabold tracking-tight text-foreground">
               {activeChannelFilter ? `Videos by ${activeChannelFilter}` : 'Recommended Mixed Feed'}
             </h2>
             {activeChannelFilter && (
@@ -225,9 +254,9 @@ export function HomePage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {videos.map(video => (
+            {videos.map((video, idx) => (
               <VideoCard
-                key={video.youtube_id}
+                key={`${video.youtube_id}-${idx}`}
                 video={video}
                 onClick={setSelectedVideo}
               />
