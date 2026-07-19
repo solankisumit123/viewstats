@@ -1,12 +1,17 @@
 # Dependencies
 node_modules/
+mobile/node_modules/
+viewstats/node_modules/
 
 # Electron Build outputs - TOO LARGE for GitHub, upload to Releases manually
 dist/
-dist_electron/
 dist_app/
+dist_electron/
 release/
 out/
+win-unpacked/
+win-unpacked.tmp/
+build/
 
 # Electron build artifacts
 build/icon.ico
@@ -25,10 +30,12 @@ build/icon.ico
 .env
 .env.local
 .env.production
+.env.*
 
 # Logs
 *.log
 npm-debug.log*
+server-error.log
 
 # OS files
 .DS_Store
@@ -38,3 +45,13 @@ Thumbs.db
 .vite/
 *.cache
 avatar-cache.json
+
+# VSCode
+.vscode/
+
+# npm
+package-lock.json
+
+# Misc
+*.pdb
+.idea/
