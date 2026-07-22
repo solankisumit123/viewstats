@@ -1,9 +1,12 @@
 {
   "name": "viewstats",
   "private": true,
-  "version": "1.0.4",
-  "description": "ViewStats YouTube Desktop Browser",
-  "author": "Solan",
+  "version": "1.0.5",
+  "description": "ViewStats Desktop — YouTube analytics, browsing, and channel intelligence for Windows users.",
+  "author": "Olanki Infotech",
+  "license": "MIT",
+  "homepage": "https://github.com/solankisumit123/viewstats",
+  "copyright": "Copyright © 2026 Olanki Infotech",
   "type": "module",
   "main": "main.cjs",
   "scripts": {
@@ -103,6 +106,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "ViewStats",
+      "installerIcon": "build/icon.ico",
       "artifactName": "${productName}-Setup-${version}.${ext}",
       "perMachine": false,
       "deleteAppDataOnUninstall": false
