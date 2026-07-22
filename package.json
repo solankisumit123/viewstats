@@ -1,11 +1,15 @@
 {
   "name": "viewstats",
   "private": true,
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "ViewStats Desktop — YouTube analytics, browsing, and channel intelligence for Windows users.",
   "author": "Olanki Infotech",
   "license": "MIT",
   "homepage": "https://github.com/solankisumit123/viewstats",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/solankisumit123/viewstats.git"
+  },
   "copyright": "Copyright © 2026 Olanki Infotech",
   "type": "module",
   "main": "main.cjs",
