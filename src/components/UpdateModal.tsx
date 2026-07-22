@@ -53,7 +53,7 @@ export function UpdateModal() {
   const [progress, setProgress] = useState<ProgressInfo>({ percent: 0 })
   const [errorMessage, setErrorMessage] = useState<string>('')
 
-  const currentVersion = updateInfo?.currentVersion || '1.0.4'
+  const currentVersion = updateInfo?.currentVersion || '1.0.5'
   const latestVersion = updateInfo?.version || currentVersion
 
   useEffect(() => {

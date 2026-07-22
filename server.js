@@ -11,6 +11,8 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+const APP_VERSION = packageJson.version || '1.0.5';
 
 dotenv.config();
 
@@ -1205,7 +1207,7 @@ app.get('/api/video-details', async (req, res) => {
 
 /** GET /api/check-update  →  { currentVersion, latestVersion, updateAvailable, releaseUrl } */
 app.get('/api/check-update', async (req, res) => {
-  const currentVersion = '1.0.4';
+  const currentVersion = APP_VERSION;
   try {
     const response = await fetch('https://api.github.com/repos/solankisumit123/viewstats/releases/latest', {
       headers: { 'User-Agent': 'ViewStats-Desktop-App' },
